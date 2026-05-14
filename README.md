@@ -1,8 +1,8 @@
 # firstrade-quote
 
-A Claude Code skill (and standalone CLI) that fetches delayed US equity quotes
-from Firstrade's public mobile-app API. **No login, no credentials, no
-`pip install`.**
+A Claude Code skill (and standalone CLI) for delayed US equity market data —
+**quotes, OHLC candles, and option chains** — from Firstrade's public
+mobile-app API. **No login, no credentials, no `pip install`.**
 
 ```
 $ ./quote.py NVDA INTC
@@ -24,21 +24,25 @@ INTC — Intel Corporation (NASDAQ)
 
 ## What it does
 
-- Fetches last price, change ($ and %), bid/ask + sizes + MMIDs, day high/low,
-  volume, and quote timestamps for one or more US-listed equity symbols.
-- Multiple symbols are fetched in parallel.
-- Outputs human-readable text by default, or JSON with `--json`.
+Three small stdlib-only scripts sharing one HTTP helper:
+
+| Script | Purpose |
+| --- | --- |
+| `quote.py` | Last price, bid/ask, day range, volume — one or many symbols in parallel |
+| `ohlc.py`  | OHLC candle data (24h, 1d, 1w, 1m, 1y) with summary or raw JSON |
+| `options.py` | Option expirations list, or chain for a given expiry (ATM ±5 strikes by default) |
+
+All three output human-readable text by default, with `--json` for the raw
+response.
 
 ## What it is not
 
-- **Not real-time.** The API returns `realtime: F` for unauthenticated callers;
-  quotes lag by ~15 minutes.
-- **Not for options, OHLC, FX, futures, crypto, or non-US listings.** The
-  underlying API has option/OHLC endpoints too — this skill just covers equity
-  quotes. See [FINDINGS.md](FINDINGS.md) for the full API surface.
-- **Not an official Firstrade integration.** The endpoint and access token were
-  reverse-engineered from the Firstrade Android app and are not documented or
-  guaranteed stable.
+- **Not real-time.** Quote responses carry `realtime: F` for unauthenticated
+  callers; data lags by ~15 minutes.
+- **Not for FX, futures, crypto, or non-US listings.** US equities only.
+- **Not an official Firstrade integration.** The endpoint and access token
+  were reverse-engineered from the Firstrade Android app and are not
+  documented or guaranteed stable.
 
 ## Install
 
@@ -57,12 +61,12 @@ runtime.
 
 ### From Claude Code
 
-The skill auto-triggers on natural-language quote requests:
+The skill auto-triggers on natural-language requests:
 
-> "what's AAPL at"
-> "quote NVDA"
-> "show me INTC and MSFT"
-> "price of TSLA"
+> "what's AAPL at" / "quote NVDA" / "price of TSLA"
+> "show me NVDA candles for the last year"
+> "TSLA option chain expiring 20260620"
+> "MSFT option expirations"
 
 Or invoke explicitly:
 
@@ -73,40 +77,58 @@ Or invoke explicitly:
 ### From the shell
 
 ```bash
-./quote.py NVDA                       # one symbol
-./quote.py NVDA INTC AAPL TSLA        # many, fetched in parallel
-./quote.py --json NVDA INTC           # machine-readable
+# Quotes
+./quote.py NVDA                          # one symbol
+./quote.py NVDA INTC AAPL TSLA           # parallel multi-symbol
+./quote.py --json NVDA INTC              # machine-readable
+
+# OHLC candles
+./ohlc.py NVDA                           # default range 1d
+./ohlc.py NVDA 1y                        # year of daily candles
+./ohlc.py NVDA 1m --json                 # full raw candles
+
+# Options
+./options.py NVDA                        # list expirations
+./options.py NVDA 20260515               # chain, ATM ±5 strikes
+./options.py NVDA 20260515 --all         # full chain (all strikes)
+./options.py NVDA 20260515 --json        # raw JSON
 ```
 
-JSON output is a list of result objects, one per requested symbol, preserving
-input order. Errored symbols include an `error` key.
+Option dates use **`YYYYMMDD` format with no dashes** — the API rejects
+`YYYY-MM-DD`.
 
 ## How it works
 
 ```
-quote.py ──HTTPS──► https://api3x.firstrade.com/public/quote
-                    ?account=00000000&q=<SYMBOL>
-                    Headers: access-token: 833w3XuIFycv18ybi
-                             User-Agent:   okhttp/4.9.2
+quote.py / ohlc.py / options.py
+   │
+   ▼
+_client.py  ──HTTPS──►  https://api3x.firstrade.com/public/{quote,ohlc,oc}
+                        Headers: access-token: 833w3XuIFycv18ybi
+                                 User-Agent:   okhttp/4.9.2
 ```
 
-- The `/public/quote` endpoint requires no session — only the hardcoded
-  `access-token` header that the Firstrade Android app ships with.
-- The `account=` query parameter is required by the server but **not
-  validated**; any placeholder works.
-- Parallel fetches use `concurrent.futures.ThreadPoolExecutor`.
-- The script does not depend on the `firstrade` Python package — it talks
-  directly to the HTTP endpoint with `urllib.request`.
+- All three scripts share `_client.py` for HTTP + auth.
+- `/public/*` endpoints need no session — only the hardcoded `access-token`
+  header the Firstrade Android app ships with.
+- `quote.py` parallelises multi-symbol fetches via `ThreadPoolExecutor`.
+- `options.py` fetches the underlying quote first to find ATM, then filters
+  the chain to ±5 strikes around it (unless `--all`).
+- No dependency on the `firstrade` Python package — pure stdlib
+  (`urllib.request`).
 
 ## Files in this repo
 
 ```
 ftapi-skill/
 ├── SKILL.md       # Claude skill manifest (frontmatter + trigger description)
-├── quote.py       # the fetcher; stdlib only, executable
+├── _client.py     # shared HTTP helper (stdlib only)
+├── quote.py       # equity quotes — parallel multi-symbol
+├── ohlc.py        # OHLC candle data
+├── options.py     # option expirations + chains
 ├── README.md      # this file
 ├── FINDINGS.md    # full notes from exploring the firstrade Python package
-└── venv/          # exploration-time venv (not required at runtime)
+└── venv/          # exploration-time venv (not required at runtime, gitignored)
 ```
 
 ## Caveats
@@ -126,17 +148,18 @@ ftapi-skill/
 
 ## Extending
 
-The underlying API also exposes:
+The same `access-token`-only auth opens up the rest of the public surface:
 
-| Endpoint | Use |
+| Endpoint | Status |
 | --- | --- |
-| `/public/ohlc?symbol=…&range=…` | candle data (24h, 1d, 1w, 1m, 1y) |
-| `/public/oc?m=get_exp_dates&root_symbol=…` | option expiration list |
-| `/public/oc?m=get_oc&root_symbol=…&exp_date=YYYYMMDD` | option chain |
+| `/public/quote` | covered by `quote.py` |
+| `/public/ohlc` | covered by `ohlc.py` |
+| `/public/oc` (expirations + chains) | covered by `options.py` |
+| `/private/*` (balances, positions, orders) | **needs login** — see [FINDINGS.md](FINDINGS.md) |
 
-All three work with the same `access-token` header and no login. See
-[FINDINGS.md](FINDINGS.md) for response shapes and quirks (notably:
-`exp_date` must be `YYYYMMDD`, not `YYYY-MM-DD`).
+For private endpoints (account balances, positions, order placement), see the
+auth flow notes in FINDINGS.md. Those require running through `FTSession.login()`
+with credentials + TOTP.
 
 ## License / attribution
 

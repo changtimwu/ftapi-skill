@@ -11,26 +11,15 @@ import argparse
 import json
 import sys
 import urllib.error
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote as urlquote
 
-ACCESS_TOKEN = "833w3XuIFycv18ybi"
-HEADERS = {
-    "User-Agent": "okhttp/4.9.2",
-    "access-token": ACCESS_TOKEN,
-}
+from _client import get_json
 
 
 def fetch(symbol: str) -> dict:
-    url = (
-        "https://api3x.firstrade.com/public/quote"
-        f"?account=00000000&q={urlquote(symbol)}"
-    )
-    req = urllib.request.Request(url, headers=HEADERS)
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
+        data = get_json(f"/public/quote?account=00000000&q={urlquote(symbol)}")
     except urllib.error.HTTPError as e:
         return {"_symbol": symbol, "error": f"HTTP {e.code}: {e.reason}"}
     except (urllib.error.URLError, TimeoutError) as e:
