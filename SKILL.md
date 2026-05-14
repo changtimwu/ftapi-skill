@@ -33,8 +33,14 @@ day high/low, volume, and quote/trade timestamps.
 
 Valid ranges: `24h`, `1d`, `1w`, `1m`, `1y`.
 Default output is a summary (candle count, first/last close, range, total
-volume, net change). Use `--json` for the full `[ts_ms, o, h, l, c]` tuples
-plus aligned `[ts_ms, vol]` entries.
+volume, net change). Use `--json` for the full candle list.
+
+**Candle shape varies by range.** `1d` returns 5-tuples `[ts, o, h, l, c]`
+with a separate aligned `vol: [[ts, v], …]` array. `1w` / `1m` / `1y`
+return 6-tuples `[ts, o, h, l, c, v]` with volume inline; the `vol` array
+may be empty. The summary view handles both transparently; if you parse
+`--json` yourself, treat the row length as variable: `vol = row[5] if
+len(row) > 5 else dict(data['vol']).get(row[0])`.
 
 ### `options.py` — option expirations & chains
 
