@@ -179,6 +179,108 @@ will just refresh itself (no user action needed). If your cached `ftat`
 itself expires (~30 days idle), you'll get a clear message asking you to
 run `./login.py request email` again.
 
+## Example outputs
+
+All shown with illustrative (not real) values where the data is account-
+specific. The top-of-page `quote.py` block is reproduced from a live run;
+the rest below mirror real shapes but use sanitized numbers.
+
+### `ohlc.py NVDA 1w`
+
+```
+NVDA OHLC (1w)
+  Candles: 5
+  First:   2026-05-08 08:00   close $221.30
+  Last:    2026-05-14 08:00   close $235.13
+  Range:   $218.40 – $236.47
+  Change:  +13.83 (+6.25%)
+  Volume:  411,205,884
+```
+
+For `--json`, you get the full `[ts_ms, o, h, l, c]` (or `[…, vol]` for 1w+)
+tuples plus the aligned `vol` array.
+
+### `options.py NVDA 20260515` (chain, ATM ±5 strikes)
+
+```
+NVDA option chain — expiry 20260515
+  Underlying: $235.07
+  Total strikes: 97, showing 11 calls + 11 puts (ATM ±5)
+
+  CALLS:
+     strike      bid      ask     last       vol        oi
+     230.00     6.75     6.80     6.25   248,648    91,852
+     232.50     4.85     4.95     4.45   272,102    11,892
+     235.00     3.35     3.40     2.98   574,982    83,598
+     237.50     2.23     2.25     1.92   260,364    13,080
+     240.00     1.40     1.42     1.18   305,877    45,189
+     ...
+
+  PUTS:
+     strike      bid      ask     last       vol        oi
+     230.00     0.86     0.88     1.02   159,340     2,079
+     232.50     1.51     1.52     1.73   131,542       405
+     235.00     2.49     2.52     2.84    80,223     2,635
+     ...
+```
+
+### `login.py` (one-time auth — email/SMS flow)
+
+```
+$ ./login.py request email
+Code sent via email to u****@e****.com.
+When you have it, run: ./login.py verify <code>
+(Code expires in ~10 minutes.)
+
+$ ./login.py verify 123456
+Login complete. Session cached — positions.py will now work.
+
+$ ./login.py status
+User:    your_username
+Session: cached (age 0h1m, ftat=409C73B7…)
+Pending: none
+```
+
+### `positions.py`
+
+```
+Accounts (1 total):
+  12345678      total $     XX,XXX.XX
+
+Positions in 12345678 (2 symbols + cash):
+  Symbol          Qty   Avg Cost       Last      Mkt Value      Day Δ    Total P/L  Total %
+  VOO        100.0000     400.00     680.00      68,000.00    -750.00   +28,000.00  +70.00%
+  VT          20.0000      85.00     155.00       3,100.00     -40.00    +1,400.00  +82.35%
+  CASH                                            2,500.00
+  TOTAL                                          73,600.00    -790.00   +29,400.00  +66.43%
+```
+
+### `history.py ytd`
+
+```
+Account 12345678 — range=ytd (6 transactions):
+  Date        Type       Symbol       Qty     Price      Amount  Description
+  2026-04-16  INTEREST              0.0000      0.00       +0.45  INTEREST ON CREDIT BALANCE AT 0.150% 03/16 THRU 04
+  2026-03-31  DIV        VOO        0.0000      0.00     +256.52  VANGUARD S&P 500 ETF CASH DIV ON XXX SHS REC 03/27
+  2026-03-24  DIV        VT         0.0000      0.00       +9.16  VANGUARD INTL EQUITY INDEX FD TOTAL WORLD STOCK IN
+  2026-03-16  INTEREST              0.0000      0.00       +0.40  INTEREST ON CREDIT BALANCE AT 0.150% 02/16 THRU 03
+  2026-02-17  INTEREST              0.0000      0.00       +0.44  INTEREST ON CREDIT BALANCE AT 0.150% 01/16 THRU 02
+  2026-01-16  INTEREST              0.0000      0.00       +0.21  INTEREST ON CREDIT BALANCE AT 0.150% 01/01 THRU 01
+
+  By type:
+    INTEREST     4x   total       +1.50
+    DIV          2x   total     +265.68
+  NET cash flow:     +267.18
+```
+
+Custom date range with two `YYYY-MM-DD` arguments works the same way:
+
+```
+$ ./history.py 2026-03-01 2026-03-31
+Account 12345678 — 2026-03-01 to 2026-03-31 (3 transactions):
+  ...
+```
+
 ## How it works
 
 ```
