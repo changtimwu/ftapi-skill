@@ -217,9 +217,40 @@ Confirmed empirically (BUY 1 INTC LIMIT $0.01 DAY against `/private/stock_order`
 
 ### Order state lifecycle (observed)
 
-- `ORDER-REQUESTED` — submitted to Firstrade, awaiting routing
-- `ORDER-REJECTED` — terminal; market rejected it (see below). `cancelable: false`
-- (other states presumably: open/working, partially filled, filled, canceled — not yet observed)
+| `state` | `status_category` | `cancelable` / `editable` | Meaning |
+| --- | --- | --- | --- |
+| `ORDER-REQUESTED` | — | — | Transient initial response from `/stock_order` POST; rapidly transitions |
+| `ORDER-SUBMITTED` | `1` | `true` / `true` | Working/resting on the book |
+| `ORDER-REJECTED`  | `2` | `false` / `false` | Terminal — market reject (e.g. excessive price, ref code 1500) |
+| `ORDER-CANCELLED` | `2` | `false` / `false` | Terminal — user-initiated cancel succeeded |
+
+**`status_category` is the reliable terminal-vs-working signal:**
+`1 = working`, `2 = terminal (did not fill)`. Filled and partial-fill categories
+were not observed in this session; they are presumably `3` and/or a separate
+value, to be confirmed.
+
+### Modify / edit: not supported by any private endpoint we could find
+
+Despite `editable: true` on a working order, there is no modify/edit endpoint.
+Probed: stages `M` and `E` on `/private/stock_order` (rejected — *"stage must
+be one of [N, P]"*), including `order_id` on `/private/stock_order` (rejected —
+*"order_id is not allowed"*), and the paths `/private/edit_order`,
+`/private/modify_order`, `/private/replace_order`, `/private/stock_order_edit`,
+`/private/stock_order_modify`, `/private/order_edit`, `/private/order_modify`,
+and `PUT/PATCH /private/stock_order/<order_id>` — all 404. The Firstrade
+mobile app's "Edit" button must implement modify as **cancel + replace**.
+
+### Cancel: `/private/cancel_order`
+
+POST form body `{"order_id": "<id>"}`. Response:
+
+```json
+{"statusCode":200,"error":"","message":"Normal",
+ "result":{"order_id":"C18207-9","result":"success"}}
+```
+
+Note the **double-nested `result`** — outer is the standard envelope, inner is
+the cancel-specific status string.
 
 ### Market-side price-band rejection ("Reference code: 1500")
 
