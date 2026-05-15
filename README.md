@@ -31,7 +31,8 @@ Four small stdlib-only scripts sharing one HTTP helper:
 | `quote.py`     | Last price, bid/ask, day range, volume — one or many symbols in parallel | none |
 | `ohlc.py`      | OHLC candle data (24h, 1d, 1w, 1m, 1y) with summary or raw JSON | none |
 | `options.py`   | Option expirations list, or chain for a given expiry (ATM ±5 strikes) | none |
-| `positions.py` | List Firstrade accounts and currently held positions | **login required** |
+| `positions.py` | List Firstrade accounts and currently held positions + cash | **login required** |
+| `history.py`   | Transaction history (dividends, interest, trades, fees) | **login required** |
 
 All scripts output human-readable text by default, with `--json` for the raw
 response.
@@ -162,6 +163,11 @@ Once logged in:
 ./positions.py 12345678              # one account
 ./positions.py --list-accounts       # accounts + balances only
 ./positions.py --json                # raw JSON
+
+./history.py                         # transactions, last 1 month, all accounts
+./history.py ytd                     # year-to-date  (or: today/1w/1m/2m/mtd/ly)
+./history.py 2026-01-01 2026-04-30   # custom range (YYYY-MM-DD with dashes)
+./history.py --account 12345678 ly   # one account
 ```
 
 **Session caveat:** Firstrade allows only one active session per account
@@ -216,6 +222,7 @@ ftapi-skill/
 ├── options.py     # option expirations + chains
 ├── login.py       # one-time CLI for /private/* login (status/totp/request/verify)
 ├── positions.py   # account holdings + cash (needs login)
+├── history.py     # transaction history — dividends/interest/trades (needs login)
 ├── README.md      # this file
 ├── FINDINGS.md    # notes from exploring the firstrade Python package
 ├── .env           # local credentials (gitignored; create yourself)
@@ -244,8 +251,9 @@ ftapi-skill/
 | `/public/quote` | covered by `quote.py` |
 | `/public/ohlc` | covered by `ohlc.py` |
 | `/public/oc` (expirations + chains) | covered by `options.py` |
-| `/private/acct_list`, `/private/positions` | covered by `positions.py` |
-| `/private/balances`, `/private/account_history`, `/private/order_status` | not yet — same auth as `positions.py` |
+| `/private/acct_list`, `/private/positions`, `/private/balances` | covered by `positions.py` |
+| `/private/account_history` | covered by `history.py` |
+| `/private/order_status` | not yet — same auth as `positions.py` |
 | `/private/stock_order`, `/private/option_order` (order placement) | not yet, and intentionally — see FINDINGS.md for safety notes |
 
 For additional `/private/*` endpoints, reuse `_auth.login()` to get headers

@@ -1,6 +1,6 @@
 ---
 name: firstrade-quote
-description: Fetch US equity market data and (with login) Firstrade account holdings. Public endpoints — quotes, OHLC candles, option chains — need no credentials. Account positions/balances need FIRSTRADE_USERNAME/PASSWORD/MFA_SECRET env vars. Trigger when the user asks for a stock price/quote/bid/ask/daily range, candle/OHLC/price history, option expirations/chains, OR "my positions", "what do I own", "show holdings", "account balance" — e.g. "what's AAPL at", "quote NVDA", "INTC last year", "TSLA option chain", "show my positions", "/firstrade-quote NVDA". US equities only; quotes are delayed ~15 min.
+description: Fetch US equity market data and (with login) Firstrade account state. Public endpoints — quotes, OHLC candles, option chains — need no credentials. Account positions/balances/transactions need FIRSTRADE_USERNAME/PASSWORD plus 2FA (TOTP secret or email/SMS OTP via login.py). Trigger when the user asks for: a stock price/quote/bid/ask/daily range, candle/OHLC/price history, option expirations/chains, "my positions"/"what do I own"/"holdings"/"account balance", OR transaction history ("dividends I received", "trades last month", "account history", "what did I deposit"). Examples: "what's AAPL at", "quote NVDA", "INTC last year", "TSLA option chain", "show my positions", "dividends YTD", "/firstrade-quote NVDA". US equities only; quotes are delayed ~15 min.
 ---
 
 # firstrade-quote
@@ -58,6 +58,38 @@ volume, open interest). Pass `--all` to show every strike.
 
 **Date format is `YYYYMMDD` (no dashes)** — the API rejects `YYYY-MM-DD`.
 
+### `history.py` — account transaction history (requires login)
+
+```bash
+"$CLAUDE_PLUGIN_ROOT/history.py"                            # default: last 1 month
+"$CLAUDE_PLUGIN_ROOT/history.py" ytd                        # range keyword
+"$CLAUDE_PLUGIN_ROOT/history.py" 2026-01-01 2026-04-30      # custom range
+"$CLAUDE_PLUGIN_ROOT/history.py" --account 12345678 ly      # one account
+"$CLAUDE_PLUGIN_ROOT/history.py" --json ytd                 # raw JSON
+```
+
+Range keywords: `today`, `1w`, `1m`, `2m`, `mtd`, `ytd`, `ly` — or two
+`YYYY-MM-DD` dates (with dashes; the account_history endpoint accepts dashed
+format, unlike option dates which want `YYYYMMDD`).
+
+Renders dividends / interest / buys / sells / fees as a table sorted
+newest-first, with a per-`trans_str` summary and net cash-flow total:
+
+```
+Account 88218207 — range=ytd (6 transactions):
+  Date        Type       Symbol     Qty     Price     Amount   Description
+  2026-04-16  INTEREST              ...               +0.45    INTEREST ON CREDIT BALANCE…
+  2026-03-31  DIV        VOO        ...             +256.52    VANGUARD S&P 500 ETF CASH DIV…
+  …
+  By type:
+    INTEREST     4x   total       +1.50
+    DIV          2x   total     +265.68
+  NET cash flow:     +267.18
+```
+
+Observed `trans_str` values so far: `INTEREST`, `DIV`. Trades (`BUY`/`SELL`) and
+fees show up here too — not yet observed in this account.
+
 ### `positions.py` — account holdings (requires login)
 
 ```bash
@@ -106,8 +138,9 @@ If `$CLAUDE_PLUGIN_ROOT` isn't set, the scripts also live at
 | `/public/ohlc?symbol=<SYM>&range=<R>&_v=v2` | `ohlc.py` | access-token only |
 | `/public/oc?m=get_exp_dates&root_symbol=<SYM>` | `options.py` (list expiries) | access-token only |
 | `/public/oc?m=get_oc&root_symbol=<SYM>&exp_date=<YYYYMMDD>&chains_range=A` | `options.py` (chain) | access-token only |
-| `/sess/login`, `/sess/verify_pin` | `positions.py` (login flow) | — |
-| `/private/acct_list`, `/private/positions?account=…` | `positions.py` | ftat + sid |
+| `/sess/login`, `/sess/verify_pin`, `/sess/request_code` | `login.py` | — |
+| `/private/acct_list`, `/private/positions`, `/private/balances` | `positions.py` | ftat + sid |
+| `/private/account_history` | `history.py` | ftat + sid |
 
 Every request sends `access-token: 833w3XuIFycv18ybi` and
 `User-Agent: okhttp/4.9.2`. `/public/*` needs nothing else; `/private/*`
@@ -134,6 +167,7 @@ Invoke whenever the user asks for any of:
 - Price history, candle data, OHLC, "show me the chart" → `ohlc.py`
 - Option expirations, option chain, calls/puts at strike X → `options.py`
 - "my positions", "what do I own", "show holdings", "account balance" → `positions.py`
+- Transaction history, dividends received, trades last month/year, account activity → `history.py`
 
 Do not invoke for: international tickers, FX, futures, crypto, or anything
 needing real-time/intraday millisecond accuracy.
