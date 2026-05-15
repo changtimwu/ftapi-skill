@@ -80,12 +80,32 @@ The `venv/` in this repo only exists for exploration (it holds the upstream
 
 ### From Claude Code
 
-The skill auto-triggers on natural-language requests:
+The skill auto-triggers on natural-language requests. Public-data (no login):
 
 > "what's AAPL at" / "quote NVDA" / "price of TSLA"
 > "show me NVDA candles for the last year"
 > "TSLA option chain expiring 20260620"
 > "MSFT option expirations"
+
+Account-state (login required):
+
+> "show my positions" / "what do I own" / "account balance"
+> "dividends YTD" / "transactions last month" / "account history"
+
+Order management (login required):
+
+> "show my open orders" / "list pending orders"
+> "cancel order C12345-6" / "cancel my open order"
+> **"preview a BUY 10 INTC at $50"** / "what would it cost to buy 10 NVDA at $200"
+> **"place a dry-run SELL 5 VOO at $700"**
+
+For order *placement*, Claude will always **dry-run first** (sends
+`preview=true` — validates the order through Firstrade's API but never
+submits it) and ask for explicit confirmation before submitting any real
+order. The skill defaults to preview unless you say "place it for real",
+"submit it", or similar unambiguous wording. There is no dedicated
+`order.py` script yet — placement is handled inline via the patterns in
+[FINDINGS.md](FINDINGS.md#order-placement-dry-run-vs-real-and-market-side-price-band-rejects).
 
 Or invoke explicitly:
 

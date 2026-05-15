@@ -1,6 +1,6 @@
 ---
 name: firstrade-quote
-description: Fetch US equity market data and (with login) Firstrade account state. Public endpoints — quotes, OHLC candles, option chains — need no credentials. Account positions/balances/transactions need FIRSTRADE_USERNAME/PASSWORD plus 2FA (TOTP secret or email/SMS OTP via login.py). Trigger when the user asks for: a stock price/quote/bid/ask/daily range, candle/OHLC/price history, option expirations/chains, "my positions"/"what do I own"/"holdings"/"account balance", OR transaction history ("dividends I received", "trades last month", "account history", "what did I deposit"). Examples: "what's AAPL at", "quote NVDA", "INTC last year", "TSLA option chain", "show my positions", "dividends YTD", "/firstrade-quote NVDA". US equities only; quotes are delayed ~15 min.
+description: Fetch US equity market data and (with login) Firstrade account state + order management. Public endpoints — quotes, OHLC candles, option chains — need no credentials. Account positions/balances/transactions/orders need FIRSTRADE_USERNAME/PASSWORD plus 2FA (TOTP secret or email/SMS OTP via login.py). Trigger when the user asks for: a stock price/quote/bid/ask/daily range, candle/OHLC/price history, option expirations/chains, "my positions"/"what do I own"/"holdings"/"account balance", transaction history ("dividends I received", "trades last month", "account history"), OR order operations ("show my open orders", "cancel order X", "preview a buy of 10 NVDA at $200", "what would it cost to buy …", "place a dry-run sell …"). Examples: "what's AAPL at", "quote NVDA", "TSLA option chain", "show my positions", "dividends YTD", "open orders", "cancel C12345-6", "preview buy 10 INTC at $50". US equities only; quotes are delayed ~15 min.
 ---
 
 # firstrade-quote
@@ -168,6 +168,8 @@ Invoke whenever the user asks for any of:
 - Option expirations, option chain, calls/puts at strike X → `options.py`
 - "my positions", "what do I own", "show holdings", "account balance" → `positions.py`
 - Transaction history, dividends received, trades last month/year, account activity → `history.py`
+- Open orders, "show my orders", cancel an order → inline `/private/order_status`, `/private/cancel_order` via `_auth.py`
+- "preview a buy/sell", "what would it cost to buy …", "place a dry-run …" → inline `/private/stock_order` with `preview=true` via `_auth.py`
 
 Do not invoke for: international tickers, FX, futures, crypto, or anything
 needing real-time/intraday millisecond accuracy.
@@ -175,3 +177,22 @@ needing real-time/intraday millisecond accuracy.
 If `positions.py` exits with a "Missing credentials" message, tell the user
 which env vars to set rather than guessing or hardcoding values — never put
 real credentials into committed code.
+
+### Order placement safety rules
+
+There is no `order.py` script yet — order placement is handled inline against
+`/private/stock_order` using the patterns documented in FINDINGS.md. **Always
+follow this sequence:**
+
+1. **Preview first.** Run with `preview=true` (and no `stage` field). This
+   round-trips through Firstrade for validation but never places an order.
+2. **Show the preview output to the user** (estimated_total, current bid/ask,
+   commission) and ask for explicit confirmation before submitting for real.
+3. **Real placement** uses `preview=false` + `stage=P`. Capture the returned
+   `order_id` and immediately verify via `/private/order_status`.
+4. **Never assume "buy NVDA" means real placement.** Default to dry-run unless
+   the user explicitly says "place it for real", "submit it", "actually buy",
+   or similar unambiguous wording. When in doubt, ask.
+5. **For sells**, also confirm the user actually owns enough shares of that
+   symbol (cross-check `positions.py`) — Firstrade will reject short sales by
+   default but it's friendlier to catch this client-side.
