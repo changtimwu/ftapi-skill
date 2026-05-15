@@ -31,6 +31,10 @@ def fetch_positions(headers: dict, account: str) -> dict:
     return authed_get(f"/private/positions?account={account}&per_page=200", headers)
 
 
+def fetch_balances(headers: dict, account: str) -> dict:
+    return authed_get(f"/private/balances?account={account}", headers)
+
+
 def _f(val, default: float = 0.0) -> float:
     try:
         return float(val)
@@ -48,15 +52,18 @@ def render_accounts(data: dict) -> str:
     return "\n".join(out)
 
 
-def render_positions(account: str, data: dict) -> str:
+def render_positions(account: str, data: dict, balances: dict | None = None) -> str:
     if data.get("error"):
         return f"{account}: ERROR — {data['error']}"
     items = data.get("items", [])
-    if not items:
+    cash = _f((balances or {}).get("result", {}).get("cash_balance"))
+    pending_lock = _f((balances or {}).get("result", {}).get("money_locked_by_pending_orders"))
+
+    if not items and cash == 0:
         return f"{account}: no positions held."
 
     rows = sorted(items, key=lambda p: -_f(p.get("market_value")))
-    total_mv = sum(_f(p.get("market_value")) for p in rows)
+    total_mv = sum(_f(p.get("market_value")) for p in rows) + cash
     total_day = sum(_f(p.get("day_change")) for p in rows)
     total_cost = sum(_f(p.get("cost")) for p in rows)
     total_pl = sum(_f(p.get("gainloss")) for p in rows)
@@ -66,9 +73,18 @@ def render_positions(account: str, data: dict) -> str:
         f"  {'Symbol':<8} {'Qty':>10} {'Avg Cost':>10} {'Last':>10} "
         f"{'Mkt Value':>14} {'Day Δ':>10} {'Total P/L':>12} {'Total %':>8}"
     )
-    out = [f"Positions in {account} ({len(items)} symbols):", header]
+    out = [
+        f"Positions in {account} ({len(items)} symbols + cash):",
+        header,
+    ]
     for p in rows:
         out.append(_fmt_position(p))
+    if balances is not None:
+        cash_note = f"  (locked by pending orders: ${pending_lock:,.2f})" if pending_lock else ""
+        out.append(
+            f"  {'CASH':<8} {'':>10} {'':>10} {'':>10} "
+            f"{cash:>14,.2f} {'':>10} {'':>12} {'':>8}{cash_note}"
+        )
     out.append(
         f"  {'TOTAL':<8} {'':>10} {'':>10} {'':>10} "
         f"{total_mv:>14,.2f} {total_day:>+10,.2f} {total_pl:>+12,.2f} {overall_pct:>+7.2f}%"
@@ -117,7 +133,14 @@ def main(argv: list[str]) -> int:
             return 2
         nums = [args.account]
 
-    results = [{"account": n, "positions": fetch_positions(headers, n)} for n in nums]
+    results = [
+        {
+            "account": n,
+            "positions": fetch_positions(headers, n),
+            "balances": fetch_balances(headers, n),
+        }
+        for n in nums
+    ]
 
     if args.json:
         print(json.dumps(results, indent=2))
@@ -127,7 +150,7 @@ def main(argv: list[str]) -> int:
         print(render_accounts(accts))
         print()
     for r in results:
-        print(render_positions(r["account"], r["positions"]))
+        print(render_positions(r["account"], r["positions"], r["balances"]))
         print()
     return 0
 
