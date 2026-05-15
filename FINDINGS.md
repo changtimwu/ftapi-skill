@@ -186,6 +186,65 @@ Position-item field names (from `/private/positions`, undocumented):
 | `adj_cost` / `adj_gainloss` | adjusted for splits/dividends |
 | `52w_high` / `52w_low`, `eps`, `pe`, `beta`, `div_share`, `yield`, … | bonus quote-like fields included with each position |
 
+## Order placement: dry-run vs real, and market-side price-band rejects
+
+Confirmed empirically (BUY 1 INTC LIMIT $0.01 DAY against `/private/stock_order`).
+
+### Request payload (form-encoded POST)
+
+| Field | Value | Notes |
+| --- | --- | --- |
+| `symbol` | `INTC` | ticker |
+| `transaction` | `B` | BUY (`S` = SELL, `SS` = SELL_SHORT, `BC` = BUY_TO_COVER, `BO` = BUY_OPTION, `SO` = SELL_OPTION) |
+| `shares` | `1` | omit and send `dollar_amount` for notional orders |
+| `duration` | `0` | DAY (`D` = DAY_EXT, `N` = OVERNIGHT, `1` = GT90) |
+| `instructions` | `0` | NONE (`1` = AON, `4` = OPG, `5` = CLO) |
+| `price_type` | `2` | LIMIT (`1` = MARKET, `3` = STOP, `4` = STOP_LIMIT, `5` = TS$, `6` = TS%) |
+| `limit_price` | `0.01` | required for LIMIT/STOP_LIMIT |
+| `account` | `88218207` | |
+| `preview` | `true` / `false` | see below |
+| `stage` | `P` | **only on the real-placement call**, not on previews |
+
+### Two-stage call pattern
+
+- **Dry run / preview:** `preview=true` (no `stage`). Returns a `result` block with
+  validated order details and a current quote (`bid`, `ask`, `last`, sizes, MMIDs,
+  `realtime: T`). **No order touches the book; no order_id is generated.** This is
+  also how the upstream `firstrade` package's default `dry_run=True` works.
+- **Real placement:** `preview=false` + `stage=P`. Returns `result.order_id` and
+  initial `state: "ORDER-REQUESTED"`. The order is now in Firstrade's order
+  management system and will be routed to the market.
+
+### Order state lifecycle (observed)
+
+- `ORDER-REQUESTED` — submitted to Firstrade, awaiting routing
+- `ORDER-REJECTED` — terminal; market rejected it (see below). `cancelable: false`
+- (other states presumably: open/working, partially filled, filled, canceled — not yet observed)
+
+### Market-side price-band rejection ("Reference code: 1500")
+
+A BUY at $0.01 on INTC (ask ~$107) was **rejected by the exchange**, not by
+Firstrade, with:
+
+> "This order was rejected by market due to either excessive price or other
+> reasons, please contact Firstrade for assistance. **Reference code: 1500**"
+
+Implication: SEC LULD (limit-up/limit-down) bands and exchange clearly-erroneous-
+order protections will reject obvious fat-finger prices before they ever reach
+the book. To get a resting unmatched order (e.g. to exercise `cancel_order`),
+use a limit that is below market but still inside the daily LULD band — for
+INTC at $107, somewhere like $50–80 would rest; $0.01 will not.
+
+`reject_msg` carries the human-readable text and `Reference code: 1500` appears
+to be Firstrade's label for market-side excessive-price rejects specifically.
+
+### Bonus finding: authenticated quotes are real-time
+
+`/public/quote` returns `realtime: F` (delayed). The same quote data embedded
+in an authenticated order preview (`/private/stock_order` with `preview=true`)
+returns `realtime: T` and live prices. Suggests Firstrade's real-time data
+entitlement is tied to a logged-in session, not the `access-token` alone.
+
 ## Gotchas / safety notes
 
 - **Debug mode dumps secrets.** `FTSession(debug=True)` logs full
