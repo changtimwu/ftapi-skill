@@ -47,16 +47,33 @@ response.
 
 ## Install
 
+Requires **Python 3.10+** (uses PEP 604 `X | None` syntax). Stdlib only — no
+`pip install` needed.
+
 ```bash
-git clone <this-repo> ~/Documents/ftapi-skill
-ln -s ~/Documents/ftapi-skill ~/.claude/skills/firstrade-quote
-chmod +x ~/Documents/ftapi-skill/quote.py
+# Clone wherever you like; example uses ~/src/ftapi-skill
+git clone https://github.com/changtimwu/ftapi-skill.git ~/src/ftapi-skill
+
+# Make sure Claude Code's skills directory exists, then symlink the repo into it
+mkdir -p ~/.claude/skills
+ln -snf ~/src/ftapi-skill ~/.claude/skills/firstrade-quote
+
+# git preserves +x on the committed scripts, but if you grabbed a zip instead
+# of cloning, restore them:
+chmod +x ~/src/ftapi-skill/{quote,ohlc,options,positions,login}.py
 ```
 
-That's it. The script is stdlib-only (Python 3.10+), so no virtualenv or
-dependencies are required for the skill itself. The `venv/` in this directory
-holds the `firstrade` package used during exploration but is **not** needed at
-runtime.
+Verify:
+
+```bash
+~/.claude/skills/firstrade-quote/quote.py NVDA
+```
+
+If you see a price block, you're done. Inside Claude Code, type
+`/firstrade-quote` to confirm the skill is registered.
+
+The `venv/` in this repo only exists for exploration (it holds the upstream
+`firstrade` PyPI package) and is gitignored. Runtime needs nothing from it.
 
 ## Usage
 
@@ -100,23 +117,61 @@ Option dates use **`YYYYMMDD` format with no dashes** — the API rejects
 
 #### Positions (requires login)
 
-```bash
-# One-time: set credentials in your shell or a .env file in this dir
-export FIRSTRADE_USERNAME=...
-export FIRSTRADE_PASSWORD=...
-export FIRSTRADE_MFA_SECRET=...     # base32 TOTP seed, not the 6-digit code
+This is the only command that touches your real Firstrade account. First,
+put your username and password in a `.env` file next to the scripts (the
+file is gitignored, mode 0600 recommended):
 
-# Then:
-./positions.py                       # all accounts + holdings
-./positions.py 12345678              # one account
-./positions.py --list-accounts       # balances only, no positions
-./positions.py --json
+```bash
+cat > ~/.claude/skills/firstrade-quote/.env <<'EOF'
+FIRSTRADE_USERNAME=your_username
+FIRSTRADE_PASSWORD=your_password
+# Only set this if your account uses an authenticator app (TOTP) for 2FA;
+# leave it out if your second factor is email or SMS.
+# FIRSTRADE_MFA_SECRET=YOUR_BASE32_SEED
+EOF
+chmod 600 ~/.claude/skills/firstrade-quote/.env
 ```
 
-The session token is cached at `~/.config/firstrade-skill/session-<user>.json`
-(mode 0600) and reused for ~30 days. Both the `.env` file and the cache file
-are gitignored. `FIRSTRADE_MFA_SECRET` is the base32 **seed** from your
-Firstrade 2FA QR code, not the rotating 6-digit code.
+Then run **one** of these one-time login flows, depending on how your
+Firstrade account's 2FA is configured:
+
+- **Email or SMS OTP** (the default for most accounts):
+
+  ```bash
+  ./login.py request email          # or `request sms`
+  # Read the 6-digit code from your inbox / phone
+  ./login.py verify 123456
+  ```
+
+- **TOTP / authenticator app** (only if you set up an authenticator
+  during Firstrade 2FA enrollment and saved the base32 seed):
+
+  ```bash
+  # Add FIRSTRADE_MFA_SECRET to .env first, then:
+  ./login.py totp
+  ```
+
+After a successful login, the session is cached at
+`~/.config/firstrade-skill/session-<user>.json` (mode 0600) and reused for
+~30 days. `./login.py status` shows the current state.
+
+Once logged in:
+
+```bash
+./positions.py                       # all accounts + holdings + cash
+./positions.py 12345678              # one account
+./positions.py --list-accounts       # accounts + balances only
+./positions.py --json                # raw JSON
+```
+
+**Session caveat:** Firstrade allows only one active session per account
+across all devices (mobile app, web, this CLI). Every `positions.py`
+invocation transparently re-POSTs `/sess/login` to get a fresh `sid` —
+this is normal and matches what the upstream `firstrade` package does.
+If you log into the Firstrade mobile app, the next `positions.py` run
+will just refresh itself (no user action needed). If your cached `ftat`
+itself expires (~30 days idle), you'll get a clear message asking you to
+run `./login.py request email` again.
 
 ## How it works
 
@@ -127,16 +182,27 @@ quote.py / ohlc.py / options.py
 _client.py  ──HTTPS──►  https://api3x.firstrade.com/public/{quote,ohlc,oc}
                         Headers: access-token: 833w3XuIFycv18ybi
                                  User-Agent:   okhttp/4.9.2
+
+
+login.py  ─┐
+positions.py ──► _auth.py  ──HTTPS──►  /sess/login, /sess/request_code,
+                                       /sess/verify_pin
+                                  ──►  /private/acct_list, /private/positions,
+                                       /private/balances
+                       Headers: access-token + ftat + sid
 ```
 
-- All three scripts share `_client.py` for HTTP + auth.
-- `/public/*` endpoints need no session — only the hardcoded `access-token`
+- All four data scripts share `_client.py` for the base URL + access-token.
+- `/public/*` endpoints need no session — just the hardcoded `access-token`
   header the Firstrade Android app ships with.
 - `quote.py` parallelises multi-symbol fetches via `ThreadPoolExecutor`.
 - `options.py` fetches the underlying quote first to find ATM, then filters
   the chain to ±5 strikes around it (unless `--all`).
-- No dependency on the `firstrade` Python package — pure stdlib
-  (`urllib.request`).
+- `_auth.py` implements RFC 6238 TOTP from scratch (no `pyotp` needed) and
+  caches only the long-lived `ftat` — `sid` is refreshed on every invocation
+  via a re-POST to `/sess/login`.
+- No dependency on the upstream `firstrade` PyPI package or `requests` —
+  pure stdlib (`urllib.request`, `hmac`, `hashlib`, `base64`).
 
 ## Files in this repo
 
@@ -148,7 +214,8 @@ ftapi-skill/
 ├── quote.py       # equity quotes — parallel multi-symbol
 ├── ohlc.py        # OHLC candle data
 ├── options.py     # option expirations + chains
-├── positions.py   # account holdings (needs login)
+├── login.py       # one-time CLI for /private/* login (status/totp/request/verify)
+├── positions.py   # account holdings + cash (needs login)
 ├── README.md      # this file
 ├── FINDINGS.md    # notes from exploring the firstrade Python package
 ├── .env           # local credentials (gitignored; create yourself)
