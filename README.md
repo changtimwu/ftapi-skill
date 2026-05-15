@@ -24,15 +24,16 @@ INTC — Intel Corporation (NASDAQ)
 
 ## What it does
 
-Three small stdlib-only scripts sharing one HTTP helper:
+Four small stdlib-only scripts sharing one HTTP helper:
 
-| Script | Purpose |
-| --- | --- |
-| `quote.py` | Last price, bid/ask, day range, volume — one or many symbols in parallel |
-| `ohlc.py`  | OHLC candle data (24h, 1d, 1w, 1m, 1y) with summary or raw JSON |
-| `options.py` | Option expirations list, or chain for a given expiry (ATM ±5 strikes by default) |
+| Script | Purpose | Auth |
+| --- | --- | --- |
+| `quote.py`     | Last price, bid/ask, day range, volume — one or many symbols in parallel | none |
+| `ohlc.py`      | OHLC candle data (24h, 1d, 1w, 1m, 1y) with summary or raw JSON | none |
+| `options.py`   | Option expirations list, or chain for a given expiry (ATM ±5 strikes) | none |
+| `positions.py` | List Firstrade accounts and currently held positions | **login required** |
 
-All three output human-readable text by default, with `--json` for the raw
+All scripts output human-readable text by default, with `--json` for the raw
 response.
 
 ## What it is not
@@ -97,6 +98,26 @@ Or invoke explicitly:
 Option dates use **`YYYYMMDD` format with no dashes** — the API rejects
 `YYYY-MM-DD`.
 
+#### Positions (requires login)
+
+```bash
+# One-time: set credentials in your shell or a .env file in this dir
+export FIRSTRADE_USERNAME=...
+export FIRSTRADE_PASSWORD=...
+export FIRSTRADE_MFA_SECRET=...     # base32 TOTP seed, not the 6-digit code
+
+# Then:
+./positions.py                       # all accounts + holdings
+./positions.py 12345678              # one account
+./positions.py --list-accounts       # balances only, no positions
+./positions.py --json
+```
+
+The session token is cached at `~/.config/firstrade-skill/session-<user>.json`
+(mode 0600) and reused for ~30 days. Both the `.env` file and the cache file
+are gitignored. `FIRSTRADE_MFA_SECRET` is the base32 **seed** from your
+Firstrade 2FA QR code, not the rotating 6-digit code.
+
 ## How it works
 
 ```
@@ -122,12 +143,15 @@ _client.py  ──HTTPS──►  https://api3x.firstrade.com/public/{quote,ohlc
 ```
 ftapi-skill/
 ├── SKILL.md       # Claude skill manifest (frontmatter + trigger description)
-├── _client.py     # shared HTTP helper (stdlib only)
+├── _client.py     # shared HTTP helper for /public/* (stdlib only)
+├── _auth.py       # login flow + TOTP + session cache for /private/*
 ├── quote.py       # equity quotes — parallel multi-symbol
 ├── ohlc.py        # OHLC candle data
 ├── options.py     # option expirations + chains
+├── positions.py   # account holdings (needs login)
 ├── README.md      # this file
-├── FINDINGS.md    # full notes from exploring the firstrade Python package
+├── FINDINGS.md    # notes from exploring the firstrade Python package
+├── .env           # local credentials (gitignored; create yourself)
 └── venv/          # exploration-time venv (not required at runtime, gitignored)
 ```
 
@@ -148,18 +172,18 @@ ftapi-skill/
 
 ## Extending
 
-The same `access-token`-only auth opens up the rest of the public surface:
-
 | Endpoint | Status |
 | --- | --- |
 | `/public/quote` | covered by `quote.py` |
 | `/public/ohlc` | covered by `ohlc.py` |
 | `/public/oc` (expirations + chains) | covered by `options.py` |
-| `/private/*` (balances, positions, orders) | **needs login** — see [FINDINGS.md](FINDINGS.md) |
+| `/private/acct_list`, `/private/positions` | covered by `positions.py` |
+| `/private/balances`, `/private/account_history`, `/private/order_status` | not yet — same auth as `positions.py` |
+| `/private/stock_order`, `/private/option_order` (order placement) | not yet, and intentionally — see FINDINGS.md for safety notes |
 
-For private endpoints (account balances, positions, order placement), see the
-auth flow notes in FINDINGS.md. Those require running through `FTSession.login()`
-with credentials + TOTP.
+For additional `/private/*` endpoints, reuse `_auth.login()` to get headers
+and call `_auth.authed_get(path, headers)`. Order placement should be added
+deliberately, with a hard-default `dry_run` like the upstream package has.
 
 ## License / attribution
 

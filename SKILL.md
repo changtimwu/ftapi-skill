@@ -1,6 +1,6 @@
 ---
 name: firstrade-quote
-description: Fetch delayed US equity market data (quotes, OHLC candles, option chains) from Firstrade's public mobile-app API. No login or credentials needed. Trigger when the user asks for a stock price/quote/bid/ask/daily range, candle/OHLC/price history, or option expirations/chains — e.g. "what's AAPL at", "quote NVDA", "INTC last year", "TSLA option chain", "MSFT expirations", "/firstrade-quote NVDA". Supports US-listed equities only; quotes are delayed ~15 min.
+description: Fetch US equity market data and (with login) Firstrade account holdings. Public endpoints — quotes, OHLC candles, option chains — need no credentials. Account positions/balances need FIRSTRADE_USERNAME/PASSWORD/MFA_SECRET env vars. Trigger when the user asks for a stock price/quote/bid/ask/daily range, candle/OHLC/price history, option expirations/chains, OR "my positions", "what do I own", "show holdings", "account balance" — e.g. "what's AAPL at", "quote NVDA", "INTC last year", "TSLA option chain", "show my positions", "/firstrade-quote NVDA". US equities only; quotes are delayed ~15 min.
 ---
 
 # firstrade-quote
@@ -58,20 +58,60 @@ volume, open interest). Pass `--all` to show every strike.
 
 **Date format is `YYYYMMDD` (no dashes)** — the API rejects `YYYY-MM-DD`.
 
+### `positions.py` — account holdings (requires login)
+
+```bash
+"$CLAUDE_PLUGIN_ROOT/positions.py"                   # all accounts + positions
+"$CLAUDE_PLUGIN_ROOT/positions.py" 12345678          # one account
+"$CLAUDE_PLUGIN_ROOT/positions.py" --list-accounts   # accounts + balances only
+"$CLAUDE_PLUGIN_ROOT/positions.py" --json            # raw JSON
+```
+
+Unlike the other three scripts, this one hits `/private/*` endpoints and
+**requires authentication**. Credentials are read from environment variables
+(or a `.env` file in the skill directory):
+
+| Env var | Required | Notes |
+| --- | --- | --- |
+| `FIRSTRADE_USERNAME` | yes | login username |
+| `FIRSTRADE_PASSWORD` | yes | login password |
+| `FIRSTRADE_MFA_SECRET` | if 2FA is on | TOTP **seed** (base32 string from Firstrade's 2FA QR), not the 6-digit code |
+
+The session token (`ftat` + `sid`) is cached at
+`~/.config/firstrade-skill/session-<username>.json` (mode 0600) and reused
+across runs until it expires (~30 days, per `remember_for=30`). Cached sessions
+are smoke-tested via `/private/userinfo` before reuse; an invalid cache silently
+falls through to a fresh login.
+
+Default output renders accounts and their holdings as tables:
+
+```
+Accounts (1 total):
+  12345678      total $123,456.78
+
+Positions in 12345678 (3 symbols):
+  Symbol            Qty    Avg Cost       Last      Mkt Value      Day Δ    Total P/L
+  NVDA           50.000      120.45     235.06     11,753.00    +473.00    +5,730.50
+  …
+```
+
 If `$CLAUDE_PLUGIN_ROOT` isn't set, the scripts also live at
 `~/.claude/skills/firstrade-quote/`.
 
 ## Where the data comes from
 
-| Endpoint | Used by |
-| --- | --- |
-| `/public/quote?account=…&q=<SYM>` | `quote.py`, `options.py` (for ATM) |
-| `/public/ohlc?symbol=<SYM>&range=<R>&_v=v2` | `ohlc.py` |
-| `/public/oc?m=get_exp_dates&root_symbol=<SYM>` | `options.py` (list expiries) |
-| `/public/oc?m=get_oc&root_symbol=<SYM>&exp_date=<YYYYMMDD>&chains_range=A` | `options.py` (chain) |
+| Endpoint | Used by | Auth |
+| --- | --- | --- |
+| `/public/quote?account=…&q=<SYM>` | `quote.py`, `options.py` (for ATM) | access-token only |
+| `/public/ohlc?symbol=<SYM>&range=<R>&_v=v2` | `ohlc.py` | access-token only |
+| `/public/oc?m=get_exp_dates&root_symbol=<SYM>` | `options.py` (list expiries) | access-token only |
+| `/public/oc?m=get_oc&root_symbol=<SYM>&exp_date=<YYYYMMDD>&chains_range=A` | `options.py` (chain) | access-token only |
+| `/sess/login`, `/sess/verify_pin` | `positions.py` (login flow) | — |
+| `/private/acct_list`, `/private/positions?account=…` | `positions.py` | ftat + sid |
 
 Every request sends `access-token: 833w3XuIFycv18ybi` and
-`User-Agent: okhttp/4.9.2`. No session cookies, no login.
+`User-Agent: okhttp/4.9.2`. `/public/*` needs nothing else; `/private/*`
+additionally needs `ftat` + `sid` from the login response.
 
 The `account=` query param on `/public/quote` is required but **not validated**
 — the script uses `00000000` as a placeholder.
@@ -93,6 +133,11 @@ Invoke whenever the user asks for any of:
 - Last price, quote, bid/ask, daily range, volume for a US ticker → `quote.py`
 - Price history, candle data, OHLC, "show me the chart" → `ohlc.py`
 - Option expirations, option chain, calls/puts at strike X → `options.py`
+- "my positions", "what do I own", "show holdings", "account balance" → `positions.py`
 
 Do not invoke for: international tickers, FX, futures, crypto, or anything
 needing real-time/intraday millisecond accuracy.
+
+If `positions.py` exits with a "Missing credentials" message, tell the user
+which env vars to set rather than guessing or hardcoding values — never put
+real credentials into committed code.

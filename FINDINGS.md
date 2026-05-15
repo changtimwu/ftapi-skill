@@ -149,6 +149,43 @@ is ahead of the published 0.0.38:
 
 Otherwise the example matches the installed API surface.
 
+## Session model: `ftat` is durable, `sid` is per-login
+
+Confirmed empirically. `/sess/verify_pin` returns both `ftat` and `sid`. The
+`ftat` is the long-lived bearer (Firstrade calls it the "remember me" token,
+TTL ~30 days when `remember_for=30`). The `sid` is **per-login** — Firstrade
+maintains one active session per account across all clients (mobile app, web,
+CLI). Any new login on any device invalidates the prior `sid` everywhere.
+
+Implication: caching `sid` across processes doesn't work. Cache only `ftat`
+and on each invocation re-POST `/sess/login` with the cached `ftat` in the
+header plus `username`+`password` in the body. The response then carries a
+fresh `ftat` (possibly rotated) and a fresh `sid`, no MFA step needed. This
+is exactly what `firstrade.account.FTSession.login()` does — even with a
+saved cookie, it still hits `/sess/login` every call.
+
+Observed failure mode if you ignore this: first `/private/*` call after a
+process restart returns
+`HTTP 401 {"error":"Unauthorized","message":"Blank or invalid session"}`,
+because the cached `sid` was invalidated by some intervening login (yours or
+the API server's idle expiry).
+
+Position-item field names (from `/private/positions`, undocumented):
+
+| Field | Meaning |
+| --- | --- |
+| `quantity` | shares held |
+| `unit_cost` | avg cost per share (cost basis ÷ qty) |
+| `cost` | total cost basis |
+| `last` | last trade price |
+| `change` | per-share intraday change |
+| `change_percent` | intraday % |
+| `day_change` | **position-level** intraday $ P/L |
+| `market_value` | qty × last |
+| `gainloss` / `gainloss_percent` | total realized+unrealized P/L vs cost basis |
+| `adj_cost` / `adj_gainloss` | adjusted for splits/dividends |
+| `52w_high` / `52w_low`, `eps`, `pe`, `beta`, `div_share`, `yield`, … | bonus quote-like fields included with each position |
+
 ## Gotchas / safety notes
 
 - **Debug mode dumps secrets.** `FTSession(debug=True)` logs full
